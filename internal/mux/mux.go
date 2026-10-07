@@ -29,6 +29,8 @@ type Mux struct {
 	router   atomic.Pointer[Router]
 	exitCfg  atomic.Pointer[ExitNodeConfig]
 
+	exitConns exitConns
+
 	localNets localNets
 
 	// ConfigPath, if set, is where tailnet and settings changes made
@@ -344,6 +346,7 @@ func (m *Mux) dial(ctx context.Context, network, addr string, allowDirect bool) 
 	}
 	dial := m.direct.DialContext
 	remote := slices.DeleteFunc(slices.Clone(tgt.IPs), m.isLocal)
+	var via *ExitNodeConfig
 	if tgt.Tailnet != "" {
 		tn := m.get(tgt.Tailnet)
 		if tn == nil {
@@ -355,7 +358,7 @@ func (m *Mux) dial(ctx context.Context, network, addr string, allowDirect bool) 
 		if err != nil {
 			return nil, tgt, err
 		}
-		dial = tn.Dial
+		dial, via = tn.Dial, e
 		tgt.IPs = remote
 		tgt.Tailnet = e.Tailnet
 		tgt.Decision = Decision{Tailnet: e.Tailnet, Kind: KindExit, Peer: e.Node}
@@ -368,6 +371,9 @@ func (m *Mux) dial(ctx context.Context, network, addr string, allowDirect bool) 
 	var lastErr error
 	for _, ip := range tgt.IPs {
 		c, err := dial(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil && via != nil {
+			c, err = m.trackExit(c, via)
+		}
 		if err == nil {
 			return c, tgt, nil
 		}
@@ -377,6 +383,32 @@ func (m *Mux) dial(ctx context.Context, network, addr string, allowDirect bool) 
 		lastErr = fmt.Errorf("%s: no addresses", host)
 	}
 	return nil, tgt, lastErr
+}
+
+// Ping sends an ICMP echo to host through the tailnet that owns it, or
+// through the exit node for anything else, and waits for the answer.
+func (m *Mux) Ping(ctx context.Context, host string) error {
+	tgt, err := m.Resolve(ctx, host)
+	if err != nil {
+		return err
+	}
+	if len(tgt.IPs) == 0 {
+		return fmt.Errorf("%s: no addresses", host)
+	}
+	ip := tgt.IPs[0]
+	var t *Tailnet
+	switch {
+	case tgt.Tailnet != "":
+		t = m.get(tgt.Tailnet)
+	case m.ExitNode() != nil && !m.isLocal(ip):
+		if t, err = m.exitTailnet(); err != nil {
+			return err
+		}
+	}
+	if t == nil || !t.Enabled() {
+		return ErrNotInTailnet
+	}
+	return t.Ping(ctx, ip)
 }
 
 // LogDial logs a connection the way every frontend does.
