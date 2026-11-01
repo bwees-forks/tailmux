@@ -46,7 +46,7 @@ func TestEndToEnd(t *testing.T) {
 		SOCKS5:   "127.0.0.1:0",
 		HTTP:     "127.0.0.1:0",
 		Tailnets: []TailnetConfig{
-			{Name: "alpha", ControlURL: alpha.URL, Ephemeral: true},
+			{Name: "alpha", ControlURL: alpha.URL, Ephemeral: true, Serve: []ServeEntry{{Port: e2eServePort, TCP: "3773"}}},
 			{Name: "bravo", ControlURL: bravo.URL, Ephemeral: true},
 			{Name: "charlie", ControlURL: charlie.URL, Ephemeral: true},
 		},
@@ -443,7 +443,26 @@ func TestEndToEnd(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("serve from the config", func(t *testing.T) {
+		tn := m.Tailnet("alpha")
+		lab.Eventually(t, "serve applied", 30*time.Second, func() error {
+			sc, err := tn.lc.GetServeConfig(ctx)
+			if err != nil {
+				return err
+			}
+			if h := sc.TCP[e2eServePort]; h == nil || h.TCPForward != "127.0.0.1:3773" {
+				return fmt.Errorf("serve config %+v, error %q", sc, tn.Status().ServeError)
+			}
+			return nil
+		})
+		if _, err := os.Stat(filepath.Join(tn.srv.Dir, serveRecordFile)); err != nil {
+			t.Errorf("serve record: %v", err)
+		}
+	})
 }
+
+const e2eServePort = 3773
 
 func toggle(t *testing.T, base, name, action string, header bool) int {
 	t.Helper()
