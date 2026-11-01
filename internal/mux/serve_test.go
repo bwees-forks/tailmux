@@ -79,6 +79,20 @@ func TestApplyServes(t *testing.T) {
 			record:  serveRecord{TCP: []uint16{80}},
 		},
 		{
+			name: "config drops hand-added paths on its web port",
+			setup: func(sc *ipn.ServeConfig) {
+				sc.SetWebHandler(&ipn.HTTPHandler{Proxy: "http://127.0.0.1:7000"}, newHost, 443, "/admin", true, "")
+				sc.SetWebHandler(&ipn.HTTPHandler{Proxy: "http://127.0.0.1:8000"}, newHost, 8443, "/admin", true, "")
+			},
+			entries: []ServeEntry{{Port: 443, HTTPS: "http://127.0.0.1:3000", Path: "/"}},
+			host:    newHost,
+			want: []string{
+				newHost + ":443/ -> http://127.0.0.1:3000",
+				newHost + ":8443/admin -> http://127.0.0.1:8000",
+			},
+			record: serveRecord{Web: map[ipn.HostPort][]string{newHost + ":443": {"/"}}},
+		},
+		{
 			name: "DNS name change moves web handlers",
 			setup: func(sc *ipn.ServeConfig) {
 				sc.SetWebHandler(&ipn.HTTPHandler{Proxy: "http://127.0.0.1:3000"}, oldHost, 443, "/", true, "")

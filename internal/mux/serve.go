@@ -199,20 +199,24 @@ func applyServes(sc *ipn.ServeConfig, prev serveRecord, entries []ServeEntry, ho
 	}
 
 	var next serveRecord
+	cleared := map[uint16]bool{}
 	for _, e := range entries {
 		k, err := e.kind()
 		if err != nil {
 			continue // Normalize rejects these
 		}
 		target := *e.target(k)
-		if !k.web() {
+		if !cleared[e.Port] {
 			removeWebOnPort(sc, e.Port)
+			if h := sc.TCP[e.Port]; h != nil && h.TCPForward != "" {
+				sc.RemoveTCPForwarding("", e.Port)
+			}
+			cleared[e.Port] = true
+		}
+		if !k.web() {
 			sc.SetTCPForwarding(e.Port, target, k == serveTLSTCP, 0, host)
 			next.TCP = append(next.TCP, e.Port)
 			continue
-		}
-		if h := sc.TCP[e.Port]; h != nil && h.TCPForward != "" {
-			sc.RemoveTCPForwarding("", e.Port)
 		}
 		sc.SetWebHandler(&ipn.HTTPHandler{Proxy: target}, host, e.Port, e.Path, k == serveHTTPS, "")
 		hp := ipn.HostPort(net.JoinHostPort(host, strconv.Itoa(int(e.Port))))
